@@ -1,0 +1,191 @@
+---
+title: "Lagerquist_K_7"
+author: "Kyle Lagerquist"
+date: "10/11/2018"
+output: html_document
+---
+
+```{r}
+library("rvest")
+library("tidyverse")
+library("lubridate")
+```
+
+## R Markdown
+
+# Sportsbook Review is an online database for sports and wagering data.
+# My goal for this webscraper is to scrape all information about outcome of NFL games, and wagers made.
+# Using this data I am interested in how the public's wagering information can be used to predict the 
+# outcome of NFL games.
+
+####### QUESTIONS TO ANSWER #######
+# 1) Is there a relationship between game start time and wagers placed / money placed?
+
+# Returns a vector of all of the data belonging to the given class from the URL
+```{r}
+getDataByClass <- function(class,siteURL) {
+  siteURL %>% html_nodes(class) %>% html_text()
+}
+```
+
+# Function that returns a numerical vector of the average bet placed on each team
+```{r}
+getBetSize <- function(siteURL,dateOfGame) {
+  numGames <- length(getDataByClass("._36GvL",siteURL))
+  # allocate storage for vector that will be filled with the average size of each bet
+  betSizes <- vector(mode="character", length=numGames)
+  counter <- 1
+  # iterate through the total games played this day (total teams divided by 2)
+  # for each game there are two average bets that need to be retrieved
+  # each bet will be retrieved from using its XPATH
+  for (i in 3:((numGames/2)+2)) {
+    for (j in 1:2) {
+      # the XPATH of the current average bet
+      path <- paste(c("//*[@id='bettingOddsGridContainer']",
+                      "/div[2]/div[",i,"]/div[2]/div/div/section[4]/main/div[",j,"]"),collapse="")
+      # retrieve the average bet
+      bet <- siteURL %>% html_nodes(xpath=path) %>% html_text()
+      # replace the item in the allocated vector with the retrieved bet
+        ifelse(nchar(bet) > 0, betSizes[counter] <- bet,betSizes[counter] <- "9999999")
+      counter <- counter + 1
+    }
+  }
+  # return the numerical vector and remove the $ symbol
+  as.numeric(gsub("\\$","",betSizes))
+}
+```
+
+
+# Returns a data frame of all compiled NFL data from the select day.
+# Takes the read HTML and day of the games in as parameters.
+```{r}
+getDF <- function(siteURL,dateOfGame) {
+  # all teams that played
+  teamNames <- getDataByClass("._36GvL",siteURL)
+  # the spread for each team that played
+  allSpreads <- getDataByClass("._3Nv_7",siteURL) 
+  # the wagers placed and then the percentage of wqgers placed
+  mixedWagers <- getDataByClass("._3O8kW",siteURL) 
+  # the time each game was played
+  timeData <- getDataByClass("._3sYWn",siteURL)
+  
+  timeData <- gsub(" AM","",timeData)
+  timeData <- gsub(" PM","",timeData)
+  
+  # replace all invalid half values (½) with valid half values and change to numeric
+  changedSpreads <- as.numeric(gsub("½",".5",allSpreads))
+  
+  # remove the commas, % sign, and $ sign
+  mixedWagers <- gsub(",","",mixedWagers)
+  mixedWagers <- gsub("%","",mixedWagers)
+  mixedWagers <- gsub("\\$","",mixedWagers)
+  mixedWagers <- as.numeric(mixedWagers)
+  
+  # retrieve all of the average bets placed on everyteam
+  allAvgBets <- getBetSize(siteURL,dateOfGame)
+  
+  # retrieve the final score from all games on the given gameday
+  # once the URL is retrvieved, a vector is returned of all of the final scores
+  finalScoresURL <- read_html(paste(c("https://www.sportsbookreview.com/betting-odds/nfl-football/?date=",dateOfGame),collapse=""))
+  allScores <- finalScoresURL %>% html_nodes(xpath="//*[@class='_1Y3rN _2trL6 _308Yc']/div") %>% html_text()
+  
+  # create vectors for each column that will go into the data frame
+  # in every vector defined above the data is spread throughout in a defined pattern
+  # for each variable the sequence must be abstracted that will be turned into a column
+  # this ensures that each observation represents one football game
+  awayTeamNames <- teamNames[seq(1, length(teamNames), 2)]
+  homeTeamNames <- teamNames[seq(2, length(teamNames), 2)]
+  awayTeamSpreads <- changedSpreads[seq(1, length(changedSpreads), 2)]
+  homeTeamSpreads <- changedSpreads[seq(2, length(changedSpreads), 2)]
+  awayFinalScore <- allScores[seq(1, length(allScores), 2)]
+  homeFinalScore <- allScores[seq(2, length(allScores), 2)]
+  awayWagersPlaced <- mixedWagers[seq(1, length(mixedWagers), 8)]
+  homeWagersPlaced <- mixedWagers[seq(3, length(mixedWagers), 8)]
+  awayWagersPlacedPercent <- mixedWagers[seq(2, length(mixedWagers), 8)]
+  homeWagersPlacedPercent <- mixedWagers[seq(4, length(mixedWagers), 8)]
+  awayTotalWagered <- mixedWagers[seq(5, length(mixedWagers), 8)]
+  homeTotalWagered <- mixedWagers[seq(7, length(mixedWagers), 8)]
+  awayTotalWageredPercent <- mixedWagers[seq(6, length(mixedWagers), 8)]
+  homeTotalWageredPercent <- mixedWagers[seq(8, length(mixedWagers), 8)]
+  awayAverageBets <- allAvgBets[seq(1, length(allAvgBets), 2)]
+  homeAverageBets <- allAvgBets[seq(2, length(allAvgBets), 2)]
+  
+  # create the data frame with all the neccessary columns
+  compiledNFLData <- data.frame("time"=timeData,"away"=awayTeamNames,"home"=homeTeamNames,
+                   "awaySpread"=awayTeamSpreads,"homeSpread"=homeTeamSpreads,
+                   "awayFinalScore"=awayFinalScore,"homeFinalScore"=homeFinalScore,
+                   "awayWagersPlaced"=awayWagersPlaced,"homeWagersPlaced"=homeWagersPlaced,
+                   "awayWagersPlacedPercent"=awayWagersPlacedPercent,
+                   "homeWagersPlacedPercent"=homeWagersPlacedPercent,
+                   "awayTotalWagered"=awayTotalWagered,"homeTotalWagered"=homeTotalWagered,
+                   "awayTotalWageredPercent"=awayTotalWageredPercent,
+                   "homeTotalWageredPercent"=homeTotalWageredPercent,
+                   "awayAverageBet"=awayAverageBets,"homeAverageBet"=homeAverageBets)
+  
+  # using the lubridate package, add a date object for the date of each game, and the day of the week of each game
+  mutate(compiledNFLData,date=ymd(dateOfGame),dayOfWeek=wday(date,label = TRUE))
+}
+```
+
+
+# Function that iterates over a list of days where an NFL game occured,
+# the list of days are in YYYYMMDD format.
+# Retrieves a data frame for the first game of the season and then appends every returned dataframe to it.
+```{r}
+getMultipleDays <- function() {
+  # URL for all football data from 09/30/2018
+  footballDataURL <- read_html("https://www.sportsbookreview.com/betting-odds/nfl-football/consensus?date=20180930")
+  compiledNFLData <- getDF(footballDataURL,"20180906")
+  
+  # list of all days where an NFL game has occured in the 2018 season
+  moreFootballDays <- c("20180909","20180910","20180913","20180916","20180917","20180923","20180920",
+                        "20180924","20180927","20180930","20181001","20181004","20181007","20181008")
+  # iterate through all days in the list
+  for (oneDay in moreFootballDays) {
+    # the URL for the consensus gambling data
+    newURL <- paste(c("https://www.sportsbookreview.com/betting-odds/nfl-football/consensus?date=",oneDay),collapse="")
+    newHTML <- read_html(newURL)
+    # get the constructed dataframe for this day
+    newData <- getDF(newHTML,oneDay)
+    # append the data frame to all of the previously retrieved data
+    compiledNFLData <- rbind(compiledNFLData,newData)
+  }
+  compiledNFLData
+}
+
+compiledNFLData <- getMultipleDays()
+```
+
+
+# Generates a scatter plot of the total amount of bets placed on a game vs. game start time on Sundays.
+```{r}
+graphBetsByTime <- function(df) {
+  # add a column for total bets placed on the game
+  total <- mutate(compiledNFLData,totalBets=awayWagersPlaced+homeWagersPlaced)
+  # filter only games that were played on Sunday
+  filt <- filter(total,dayOfWeek=="Sun")
+  # create a scatter plot of the two variables
+  ggplot(filt, aes(x=time, y=totalBets)) + geom_point() +
+    labs(title = "Bets Per Start Time on Sundays",
+         caption = "According to Sports Book Review")
+}
+```
+
+
+# Generates a scatter plot of the total amount of money placed on a game vs. game start time on Sundays.
+```{r}
+graphTotalWageredByTime <- function(df) {
+  # add a column for total money placed on the game
+  total <- mutate(compiledNFLData,totalWagered=awayTotalWagered+homeTotalWagered)
+  # filter only games that were played on Sunday
+  filt <- filter(total,dayOfWeek=="Sun")
+  # create a scatter plot of the two variables
+  ggplot(filt, aes(x=time, y=totalWagered)) + geom_point() +
+    labs(title = "Total Wagered Per Start Time on Sundays",
+         caption = "According to Sports Book Review")
+}
+
+graphBetsByTime()
+graphTotalWageredByTime()
+```
+
